@@ -1,0 +1,1212 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ALIGN — Posture Analyzer</title>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@200;300;400;500;600&family=DM+Mono:wght@300;400;500&family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,600;1,9..144,300&display=swap');
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:       #f4f2ee;
+  --bg2:      #ece9e3;
+  --white:    #ffffff;
+  --ink:      #1a1916;
+  --ink2:     #2e2c28;
+  --muted:    #8a8880;
+  --border:   #dedad4;
+  --border2:  #ccc8c0;
+
+  --good:     #2d7a4f;
+  --good-bg:  #e8f5ee;
+  --warn:     #b06d10;
+  --warn-bg:  #fdf0e0;
+  --bad:      #b83232;
+  --bad-bg:   #fce8e8;
+
+  --spine-color:    #2d7a4f;
+  --shoulder-color: #3a6eb8;
+  --head-color:     #b06d10;
+  --hip-color:      #7a3ab8;
+}
+
+html, body { height: 100%; overflow: hidden; background: var(--bg); }
+
+body {
+  font-family: 'DM Sans', sans-serif;
+  color: var(--ink);
+  display: grid;
+  grid-template-rows: 56px 1fr;
+  height: 100vh;
+}
+
+/* ── HEADER ─────────────────────────────────────────── */
+header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 2rem;
+  background: var(--white);
+  border-bottom: 1px solid var(--border);
+  position: relative;
+  z-index: 50;
+}
+
+.brand {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.brand-name {
+  font-family: 'Fraunces', serif;
+  font-size: 1.5rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  color: var(--ink);
+}
+
+.brand-sub {
+  font-family: 'DM Mono', monospace;
+  font-size: 0.58rem;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--muted);
+  font-weight: 300;
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.live-badge {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: 'DM Mono', monospace;
+  font-size: 0.52rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--muted);
+  border: 1px solid var(--border2);
+  padding: 5px 12px;
+  border-radius: 2px;
+  transition: all 0.4s;
+}
+.live-badge .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--border2); transition: all 0.4s; }
+.live-badge.on { color: var(--good); border-color: rgba(45,122,79,0.3); }
+.live-badge.on .dot { background: var(--good); box-shadow: 0 0 0 3px rgba(45,122,79,0.15); animation: pulse-dot 1.4s ease-in-out infinite; }
+@keyframes pulse-dot { 0%,100%{transform:scale(1)} 50%{transform:scale(0.7)} }
+
+/* ── BODY LAYOUT ────────────────────────────────────── */
+.app {
+  display: grid;
+  grid-template-columns: 1fr 340px;
+  overflow: hidden;
+}
+
+/* ── LEFT: CAMERA + OVERLAY ────────────────────────── */
+.cam-section {
+  position: relative;
+  background: var(--ink);
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+video { display: none; }
+
+canvas#cam-feed {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  transform: scaleX(-1);
+}
+
+canvas#pose-overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%; height: 100%;
+  pointer-events: none;
+  transform: scaleX(-1);
+}
+
+/* Score ring overlay on camera */
+.score-overlay {
+  position: absolute;
+  top: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 10;
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.score-ring-wrap {
+  position: relative;
+  width: 80px; height: 80px;
+}
+
+.score-ring-wrap svg { width: 80px; height: 80px; transform: rotate(-90deg); }
+
+.score-number {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: 'Fraunces', serif;
+  font-size: 1.6rem;
+  font-weight: 600;
+  color: white;
+}
+
+.score-label {
+  font-family: 'DM Mono', monospace;
+  font-size: 0.46rem;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: rgba(255,255,255,0.5);
+}
+
+/* Alert banner */
+.alert-banner {
+  position: absolute;
+  bottom: 70px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 10;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.3s;
+  white-space: nowrap;
+}
+.alert-banner.show { opacity: 1; }
+.alert-inner {
+  font-family: 'DM Mono', monospace;
+  font-size: 0.6rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  padding: 8px 20px;
+  border-radius: 2px;
+  backdrop-filter: blur(8px);
+}
+.alert-inner.bad  { background: rgba(184,50,50,0.85); color: white; }
+.alert-inner.warn { background: rgba(176,109,16,0.85); color: white; }
+.alert-inner.good { background: rgba(45,122,79,0.85);  color: white; }
+
+/* Bottom control strip */
+.cam-controls {
+  position: absolute;
+  bottom: 0; left: 0; right: 0;
+  height: 52px;
+  background: rgba(26,25,22,0.85);
+  backdrop-filter: blur(10px);
+  border-top: 1px solid rgba(255,255,255,0.08);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  z-index: 10;
+}
+
+.ctrl-btn {
+  font-family: 'DM Mono', monospace;
+  font-size: 0.5rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  border: 1px solid rgba(255,255,255,0.15);
+  background: transparent;
+  color: rgba(255,255,255,0.5);
+  padding: 7px 18px;
+  border-radius: 2px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.ctrl-btn:hover { border-color: rgba(255,255,255,0.4); color: white; }
+.ctrl-btn.active { border-color: var(--good); color: var(--good); }
+.ctrl-btn.primary { background: rgba(45,122,79,0.2); border-color: var(--good); color: var(--good); }
+
+/* Loading overlay */
+#cam-loading {
+  position: absolute; inset: 0;
+  background: var(--ink);
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  gap: 1.2rem;
+  z-index: 30;
+  transition: opacity 0.7s;
+}
+#cam-loading.gone { opacity: 0; pointer-events: none; }
+
+.load-title {
+  font-family: 'Fraunces', serif;
+  font-size: 2.4rem;
+  font-weight: 600;
+  letter-spacing: 0.15em;
+  color: white;
+}
+
+.load-sub {
+  font-family: 'DM Mono', monospace;
+  font-size: 0.58rem;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: rgba(255,255,255,0.35);
+}
+
+.load-bar { width: 200px; height: 1px; background: rgba(255,255,255,0.1); overflow: hidden; }
+.load-fill { height: 100%; background: var(--good); width: 0%; animation: lf 2.5s ease forwards; }
+@keyframes lf { to { width: 100%; } }
+
+/* No pose msg */
+.no-pose {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 5;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.4s;
+}
+.no-pose.show { opacity: 1; }
+.no-pose-text {
+  font-family: 'Fraunces', serif;
+  font-size: 1rem;
+  font-style: italic;
+  font-weight: 300;
+  color: rgba(255,255,255,0.3);
+  text-align: center;
+  line-height: 1.8;
+}
+
+/* ── RIGHT PANEL ────────────────────────────────────── */
+.panel {
+  background: var(--white);
+  border-left: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.panel::-webkit-scrollbar { width: 0; }
+
+/* Posture score section */
+.score-section {
+  padding: 1.25rem 1.5rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--white);
+}
+
+.sec-label {
+  font-family: 'DM Mono', monospace;
+  font-size: 0.5rem;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 0.9rem;
+}
+
+/* Big posture score */
+.big-score {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  margin-bottom: 0.6rem;
+}
+
+.big-score-num {
+  font-family: 'Fraunces', serif;
+  font-size: 3.5rem;
+  font-weight: 600;
+  line-height: 1;
+  color: var(--good);
+  transition: color 0.4s;
+}
+
+.big-score-denom {
+  font-family: 'DM Mono', monospace;
+  font-size: 0.7rem;
+  color: var(--muted);
+  margin-bottom: 0.6rem;
+}
+
+.score-status {
+  font-family: 'Fraunces', serif;
+  font-size: 1rem;
+  font-style: italic;
+  font-weight: 300;
+  color: var(--ink2);
+  transition: color 0.4s;
+}
+
+/* Score history sparkline */
+.sparkline-wrap {
+  margin-top: 0.75rem;
+  height: 36px;
+  position: relative;
+}
+
+canvas#sparkline {
+  width: 100%;
+  height: 36px;
+  display: block;
+}
+
+/* Joint angle cards */
+.angles-section {
+  padding: 1rem 1.5rem;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.angle-list { display: flex; flex-direction: column; gap: 8px; }
+
+.angle-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.angle-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.angle-name {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 0.72rem;
+  font-weight: 500;
+  color: var(--ink2);
+}
+
+.angle-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.angle-val {
+  font-family: 'DM Mono', monospace;
+  font-size: 0.68rem;
+  color: var(--muted);
+  transition: color 0.3s;
+}
+
+.angle-bar-track {
+  height: 4px;
+  background: var(--bg);
+  border-radius: 2px;
+  overflow: hidden;
+  position: relative;
+}
+
+.angle-bar-fill {
+  height: 100%;
+  border-radius: 2px;
+  width: 0%;
+  transition: width 0.2s ease, background 0.3s;
+}
+
+/* Ideal zone marker */
+.angle-bar-track::after {
+  content: '';
+  position: absolute;
+  top: -1px;
+  height: 6px;
+  width: 2px;
+  background: rgba(45,122,79,0.4);
+  border-radius: 1px;
+}
+
+/* Tips / feedback */
+.tips-section {
+  padding: 1rem 1.5rem;
+  border-bottom: 1px solid var(--border);
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.tips-section::-webkit-scrollbar { width: 3px; }
+.tips-section::-webkit-scrollbar-thumb { background: var(--border); }
+
+.tip-list { display: flex; flex-direction: column; gap: 6px; }
+
+.tip-item {
+  display: flex;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 3px;
+  font-size: 0.68rem;
+  line-height: 1.5;
+  border: 1px solid transparent;
+  transition: all 0.3s;
+  animation: tip-in 0.3s ease;
+}
+@keyframes tip-in { from { opacity:0; transform:translateY(4px) } to { opacity:1; transform:none } }
+
+.tip-item.good  { background: var(--good-bg); border-color: rgba(45,122,79,0.15); color: var(--good); }
+.tip-item.warn  { background: var(--warn-bg); border-color: rgba(176,109,16,0.15); color: var(--warn); }
+.tip-item.bad   { background: var(--bad-bg);  border-color: rgba(184,50,50,0.15);  color: var(--bad); }
+
+.tip-icon { font-size: 0.85rem; flex-shrink: 0; line-height: 1.5; }
+.tip-text { color: var(--ink2); }
+
+.no-tips {
+  font-family: 'Fraunces', serif;
+  font-style: italic;
+  font-size: 0.85rem;
+  color: var(--muted);
+  text-align: center;
+  padding: 1.5rem 0;
+}
+
+/* Session stats strip */
+.stats-strip {
+  padding: 0.8rem 1.5rem;
+  border-top: 1px solid var(--border);
+  background: var(--bg);
+  display: grid;
+  grid-template-columns: repeat(3,1fr);
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.stat-box {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.stat-lbl {
+  font-family: 'DM Mono', monospace;
+  font-size: 0.42rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.stat-val {
+  font-family: 'Fraunces', serif;
+  font-size: 1.15rem;
+  font-weight: 600;
+  color: var(--ink);
+  letter-spacing: 0.02em;
+}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand">
+    <div class="brand-name">ALIGN</div>
+    <div class="brand-sub">Posture Analyzer · MediaPipe Pose</div>
+  </div>
+  <div class="header-right">
+    <div class="live-badge" id="live-badge">
+      <div class="dot"></div>
+      <span id="live-text">Loading</span>
+    </div>
+  </div>
+</header>
+
+<div class="app">
+
+  <!-- Camera -->
+  <div class="cam-section" id="cam-section">
+    <video id="video" autoplay muted playsinline></video>
+    <canvas id="cam-feed"></canvas>
+    <canvas id="pose-overlay"></canvas>
+
+    <div class="score-overlay">
+      <div class="score-ring-wrap">
+        <svg viewBox="0 0 80 80" id="score-ring-svg">
+          <circle cx="40" cy="40" r="34" stroke="rgba(255,255,255,0.1)" stroke-width="5" fill="none"/>
+          <circle cx="40" cy="40" r="34" stroke="#2d7a4f" stroke-width="5" fill="none"
+            stroke-dasharray="213.6" stroke-dashoffset="213.6"
+            id="ring-arc" stroke-linecap="round" style="transition:stroke-dashoffset 0.4s,stroke 0.4s"/>
+        </svg>
+        <div class="score-number" id="score-number">—</div>
+      </div>
+      <div class="score-label">Posture Score</div>
+    </div>
+
+    <div class="alert-banner" id="alert-banner">
+      <div class="alert-inner" id="alert-inner"></div>
+    </div>
+
+    <div class="no-pose show" id="no-pose">
+      <div class="no-pose-text">Stand back so your<br>full upper body is visible</div>
+    </div>
+
+    <div class="cam-controls">
+      <button class="ctrl-btn active" id="btn-skeleton">⊕ Skeleton</button>
+      <button class="ctrl-btn active" id="btn-angles">⊕ Angles</button>
+      <button class="ctrl-btn" id="btn-mirror">↔ Mirror</button>
+      <button class="ctrl-btn primary" id="btn-calibrate">◎ Calibrate</button>
+    </div>
+
+    <div id="cam-loading">
+      <div class="load-title">ALIGN</div>
+      <div class="load-sub" id="load-sub">Loading MediaPipe Pose…</div>
+      <div class="load-bar"><div class="load-fill"></div></div>
+    </div>
+  </div>
+
+  <!-- Panel -->
+  <div class="panel">
+
+    <div class="score-section">
+      <div class="sec-label">Live Score</div>
+      <div class="big-score">
+        <div class="big-score-num" id="panel-score">—</div>
+        <div class="big-score-denom">/ 100</div>
+      </div>
+      <div class="score-status" id="score-status">Waiting for pose…</div>
+      <div class="sparkline-wrap">
+        <canvas id="sparkline"></canvas>
+      </div>
+    </div>
+
+    <div class="angles-section">
+      <div class="sec-label">Joint Angles</div>
+      <div class="angle-list">
+
+        <div class="angle-row">
+          <div class="angle-header">
+            <div class="angle-name">
+              <div class="angle-dot" style="background:var(--head-color)"></div>
+              Head tilt
+            </div>
+            <div class="angle-val" id="av-head">—°</div>
+          </div>
+          <div class="angle-bar-track" style="--ideal-pct:10%">
+            <div class="angle-bar-fill" id="ab-head" style="background:var(--head-color)"></div>
+          </div>
+        </div>
+
+        <div class="angle-row">
+          <div class="angle-header">
+            <div class="angle-name">
+              <div class="angle-dot" style="background:var(--spine-color)"></div>
+              Neck forward lean
+            </div>
+            <div class="angle-val" id="av-neck">—°</div>
+          </div>
+          <div class="angle-bar-track">
+            <div class="angle-bar-fill" id="ab-neck" style="background:var(--spine-color)"></div>
+          </div>
+        </div>
+
+        <div class="angle-row">
+          <div class="angle-header">
+            <div class="angle-name">
+              <div class="angle-dot" style="background:var(--shoulder-color)"></div>
+              Shoulder level
+            </div>
+            <div class="angle-val" id="av-shoulder">—°</div>
+          </div>
+          <div class="angle-bar-track">
+            <div class="angle-bar-fill" id="ab-shoulder" style="background:var(--shoulder-color)"></div>
+          </div>
+        </div>
+
+        <div class="angle-row">
+          <div class="angle-header">
+            <div class="angle-name">
+              <div class="angle-dot" style="background:var(--spine-color)"></div>
+              Spine lean
+            </div>
+            <div class="angle-val" id="av-spine">—°</div>
+          </div>
+          <div class="angle-bar-track">
+            <div class="angle-bar-fill" id="ab-spine" style="background:var(--spine-color)"></div>
+          </div>
+        </div>
+
+        <div class="angle-row">
+          <div class="angle-header">
+            <div class="angle-name">
+              <div class="angle-dot" style="background:var(--hip-color)"></div>
+              Hip level
+            </div>
+            <div class="angle-val" id="av-hip">—°</div>
+          </div>
+          <div class="angle-bar-track">
+            <div class="angle-bar-fill" id="ab-hip" style="background:var(--hip-color)"></div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <div class="tips-section">
+      <div class="sec-label">Feedback</div>
+      <div class="tip-list" id="tip-list">
+        <div class="no-tips">Step into frame to begin analysis</div>
+      </div>
+    </div>
+
+    <div class="stats-strip">
+      <div class="stat-box">
+        <div class="stat-lbl">Session</div>
+        <div class="stat-val" id="st-time">0:00</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-lbl">Avg Score</div>
+        <div class="stat-val" id="st-avg">—</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-lbl">Alerts</div>
+        <div class="stat-val" id="st-alerts">0</div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+// ── State ──────────────────────────────────────────────────────────────────────
+const cfg = {
+  showSkeleton: true,
+  showAngles: true,
+  mirrored: true,
+  calibrated: false,
+  calibRef: null, // calibration reference angles
+};
+
+const session = {
+  start: Date.now(),
+  scores: [],   // last 60 scores for sparkline
+  scoreSum: 0,
+  scoreCount: 0,
+  alerts: 0,
+  lastAlert: 0,
+};
+
+// ── Elements ───────────────────────────────────────────────────────────────────
+const video   = document.getElementById('video');
+const camCvs  = document.getElementById('cam-feed');
+const poseCvs = document.getElementById('pose-overlay');
+const cCtx    = camCvs.getContext('2d');
+const pCtx    = poseCvs.getContext('2d');
+const sparkCvs= document.getElementById('sparkline');
+const spkCtx  = sparkCvs.getContext('2d');
+
+// ── MediaPipe Pose ─────────────────────────────────────────────────────────────
+const pose = new Pose({
+  locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${f}`
+});
+
+pose.setOptions({
+  modelComplexity: 1,
+  smoothLandmarks: true,
+  enableSegmentation: false,
+  minDetectionConfidence: 0.6,
+  minTrackingConfidence: 0.6,
+});
+
+pose.onResults(onPoseResults);
+
+// ── Camera start ───────────────────────────────────────────────────────────────
+async function startCamera() {
+  document.getElementById('load-sub').textContent = 'Requesting camera…';
+  const stream = await navigator.mediaDevices.getUserMedia({
+    video: { width: { ideal: 1280 }, height: { ideal: 720 } }
+  });
+  video.srcObject = stream;
+  await new Promise(r => video.onloadedmetadata = r);
+  video.play();
+
+  camCvs.width  = poseCvs.width  = video.videoWidth;
+  camCvs.height = poseCvs.height = video.videoHeight;
+
+  document.getElementById('load-sub').textContent = 'Calibrating model…';
+
+  const mpCam = new Camera(video, {
+    onFrame: async () => { await pose.send({ image: video }); },
+    width: video.videoWidth,
+    height: video.videoHeight
+  });
+  mpCam.start();
+}
+
+// ── Geometry helpers ───────────────────────────────────────────────────────────
+function angle2D(a, b, c) {
+  // Angle at point b, given three 2D points
+  const ab = { x: a.x - b.x, y: a.y - b.y };
+  const cb = { x: c.x - b.x, y: c.y - b.y };
+  const dot = ab.x*cb.x + ab.y*cb.y;
+  const cross = ab.x*cb.y - ab.y*cb.x;
+  return Math.abs(Math.atan2(Math.abs(cross), dot) * 180 / Math.PI);
+}
+
+function angleLine(a, b) {
+  // Angle of line AB from vertical (0 = perfectly vertical)
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  return Math.abs(Math.atan2(dx, dy) * 180 / Math.PI);
+}
+
+function midpoint(a, b) {
+  return { x: (a.x+b.x)/2, y: (a.y+b.y)/2, z: ((a.z||0)+(b.z||0))/2 };
+}
+
+function lmPx(lm, W, H) {
+  return { x: lm.x * W, y: lm.y * H, z: lm.z || 0, v: lm.visibility || 0 };
+}
+
+// ── Pose landmark indices (MediaPipe Pose) ─────────────────────────────────────
+// 0=nose, 7=left ear, 8=right ear
+// 11=left shoulder, 12=right shoulder
+// 23=left hip, 24=right hip
+// 25=left knee, 26=right knee
+
+// ── Main results handler ───────────────────────────────────────────────────────
+let firstResult = true;
+
+function onPoseResults(results) {
+  const W = camCvs.width, H = camCvs.height;
+
+  // Draw camera feed
+  cCtx.save();
+  cCtx.drawImage(results.image, 0, 0, W, H);
+  cCtx.restore();
+
+  pCtx.clearRect(0, 0, W, H);
+
+  if (!results.poseLandmarks || results.poseLandmarks.length < 25) {
+    document.getElementById('no-pose').classList.add('show');
+    return;
+  }
+
+  if (firstResult) {
+    firstResult = false;
+    document.getElementById('cam-loading').classList.add('gone');
+    document.getElementById('live-badge').classList.add('on');
+    document.getElementById('live-text').textContent = 'Tracking';
+  }
+
+  document.getElementById('no-pose').classList.remove('show');
+
+  const lm = results.poseLandmarks;
+
+  // Convert to pixel coords (landmarks are normalized 0-1)
+  const nose      = lmPx(lm[0],  W, H);
+  const leftEar   = lmPx(lm[7],  W, H);
+  const rightEar  = lmPx(lm[8],  W, H);
+  const lShoulder = lmPx(lm[11], W, H);
+  const rShoulder = lmPx(lm[12], W, H);
+  const lHip      = lmPx(lm[23], W, H);
+  const rHip      = lmPx(lm[24], W, H);
+  const lKnee     = lmPx(lm[25], W, H);
+  const rKnee     = lmPx(lm[26], W, H);
+
+  // Mid-points
+  const midShoulder = midpoint(lShoulder, rShoulder);
+  const midHip      = midpoint(lHip, rHip);
+  const midEar      = midpoint(leftEar, rightEar);
+
+  // ── Calculate angles ─────────────────────────────────────────────────────────
+  // 1. Head tilt: angle of ear-to-ear line from horizontal
+  const headTilt = angleLine({ x: leftEar.y, y: leftEar.x }, { x: rightEar.y, y: rightEar.x });
+
+  // 2. Neck forward lean: angle of ear-mid to shoulder-mid from vertical
+  const neckLean = angleLine(midEar, midShoulder);
+
+  // 3. Shoulder level: angle of shoulder line from horizontal
+  const shoulderTilt = angleLine(
+    { x: lShoulder.y, y: lShoulder.x },
+    { x: rShoulder.y, y: rShoulder.x }
+  );
+
+  // 4. Spine lean: angle of shoulder-mid to hip-mid from vertical
+  const spineLean = angleLine(midShoulder, midHip);
+
+  // 5. Hip level: angle of hip line from horizontal
+  const hipTilt = angleLine(
+    { x: lHip.y, y: lHip.x },
+    { x: rHip.y, y: rHip.x }
+  );
+
+  // Apply calibration offset
+  const angles = {
+    head:     headTilt,
+    neck:     neckLean,
+    shoulder: shoulderTilt,
+    spine:    spineLean,
+    hip:      hipTilt,
+  };
+
+  if (cfg.calibrated && cfg.calibRef) {
+    Object.keys(angles).forEach(k => {
+      angles[k] = Math.max(0, angles[k] - cfg.calibRef[k]);
+    });
+  }
+
+  // ── Score calculation ─────────────────────────────────────────────────────────
+  // Each metric penalizes the score based on deviation from ideal
+  const penalties = {
+    head:     { ideal: 0, max: 20, weight: 0.15 },
+    neck:     { ideal: 0, max: 25, weight: 0.30 },
+    shoulder: { ideal: 0, max: 15, weight: 0.25 },
+    spine:    { ideal: 0, max: 20, weight: 0.20 },
+    hip:      { ideal: 0, max: 15, weight: 0.10 },
+  };
+
+  let score = 100;
+  Object.keys(angles).forEach(k => {
+    const p = penalties[k];
+    const dev = Math.max(0, angles[k] - p.ideal);
+    const penalty = Math.min(1, dev / p.max);
+    score -= penalty * p.weight * 100;
+  });
+  score = Math.max(0, Math.min(100, Math.round(score)));
+
+  // ── Update UI ─────────────────────────────────────────────────────────────────
+  updateScore(score);
+  updateAngles(angles, penalties);
+  updateFeedback(angles, score);
+  if (cfg.showSkeleton) drawSkeleton(lm, W, H, score);
+  if (cfg.showAngles)   drawAngleLabels(angles, { nose, midEar, midShoulder, midHip, lShoulder, rShoulder, lHip, rHip }, W, H);
+
+  // Session tracking
+  session.scores.push(score);
+  if (session.scores.length > 120) session.scores.shift();
+  session.scoreSum += score;
+  session.scoreCount++;
+  drawSparkline();
+}
+
+// ── Score display ──────────────────────────────────────────────────────────────
+function updateScore(score) {
+  const color = score >= 75 ? '#2d7a4f' : score >= 50 ? '#b06d10' : '#b83232';
+
+  // Panel score
+  const panelScore = document.getElementById('panel-score');
+  panelScore.textContent = score;
+  panelScore.style.color = color;
+
+  // Status text
+  const statusEl = document.getElementById('score-status');
+  statusEl.textContent = score >= 85 ? 'Excellent posture' :
+                          score >= 70 ? 'Good posture' :
+                          score >= 55 ? 'Fair — needs attention' :
+                          score >= 40 ? 'Poor posture detected' :
+                          'Correct your posture now';
+
+  // Ring overlay
+  const num = document.getElementById('score-number');
+  num.textContent = score;
+  const arc = document.getElementById('ring-arc');
+  const circumference = 213.6;
+  const offset = circumference - (score / 100) * circumference;
+  arc.style.strokeDashoffset = offset;
+  arc.style.stroke = color;
+
+  // Alert banner
+  if (score < 50) {
+    const now = Date.now();
+    if (now - session.lastAlert > 5000) {
+      session.lastAlert = now;
+      session.alerts++;
+      document.getElementById('st-alerts').textContent = session.alerts;
+      showAlert('⚠ Fix your posture', 'bad');
+    }
+  } else if (score < 70) {
+    showAlert('Adjust position', 'warn');
+  } else {
+    clearAlert();
+  }
+}
+
+let alertTimer;
+function showAlert(msg, type) {
+  const el = document.getElementById('alert-banner');
+  const inner = document.getElementById('alert-inner');
+  inner.textContent = msg;
+  inner.className = `alert-inner ${type}`;
+  el.classList.add('show');
+  clearTimeout(alertTimer);
+  alertTimer = setTimeout(() => el.classList.remove('show'), 3000);
+}
+function clearAlert() {
+  document.getElementById('alert-banner').classList.remove('show');
+}
+
+// ── Angle bars ─────────────────────────────────────────────────────────────────
+function updateAngles(angles, penalties) {
+  const keys = ['head','neck','shoulder','spine','hip'];
+  const ids  = ['head','neck','shoulder','spine','hip'];
+  keys.forEach((k, i) => {
+    const pct = Math.min(100, (angles[k] / penalties[k].max) * 100);
+    const color = pct < 30 ? 'var(--good)' : pct < 65 ? 'var(--warn)' : 'var(--bad)';
+    const bar = document.getElementById(`ab-${ids[i]}`);
+    const val = document.getElementById(`av-${ids[i]}`);
+    bar.style.width = `${pct}%`;
+    bar.style.background = color;
+    val.textContent = `${angles[k].toFixed(1)}°`;
+    val.style.color = pct < 30 ? 'var(--good)' : pct < 65 ? 'var(--warn)' : 'var(--bad)';
+  });
+}
+
+// ── Feedback tips ──────────────────────────────────────────────────────────────
+const TIP_DB = {
+  neck_bad:      { type:'bad',  icon:'⚠', text:'Neck is significantly forward. Draw chin back and lengthen the back of your neck.' },
+  neck_warn:     { type:'warn', icon:'→', text:'Slight forward head posture. Gently retract your chin.' },
+  head_bad:      { type:'bad',  icon:'⚠', text:'Head is tilted to one side. Level your ears.' },
+  shoulder_bad:  { type:'bad',  icon:'⚠', text:'Shoulders are uneven. Relax both shoulders down and level them.' },
+  shoulder_warn: { type:'warn', icon:'→', text:'Slight shoulder imbalance. Check if one shoulder is raised.' },
+  spine_bad:     { type:'bad',  icon:'⚠', text:'Spine is leaning. Sit up straight and centre your weight.' },
+  spine_warn:    { type:'warn', icon:'→', text:'Mild spinal lean detected. Try to sit more upright.' },
+  hip_bad:       { type:'bad',  icon:'⚠', text:'Hips are uneven — you may be leaning on one side.' },
+  all_good:      { type:'good', icon:'✓', text:'Great posture! Spine, shoulders, and head are well aligned.' },
+  mostly_good:   { type:'good', icon:'✓', text:'Posture is mostly good. Minor adjustments may help.' },
+};
+
+let lastTipKey = '';
+function updateFeedback(angles, score) {
+  const tips = [];
+
+  if (angles.neck > 18)     tips.push(TIP_DB.neck_bad);
+  else if (angles.neck > 10) tips.push(TIP_DB.neck_warn);
+
+  if (angles.head > 12)      tips.push(TIP_DB.head_bad);
+
+  if (angles.shoulder > 10)  tips.push(TIP_DB.shoulder_bad);
+  else if (angles.shoulder > 5) tips.push(TIP_DB.shoulder_warn);
+
+  if (angles.spine > 15)     tips.push(TIP_DB.spine_bad);
+  else if (angles.spine > 8)  tips.push(TIP_DB.spine_warn);
+
+  if (angles.hip > 10)       tips.push(TIP_DB.hip_bad);
+
+  if (tips.length === 0) {
+    tips.push(TIP_DB.all_good);
+  } else if (score >= 72 && tips.every(t => t.type !== 'bad')) {
+    tips.unshift(TIP_DB.mostly_good);
+  }
+
+  const key = tips.map(t => t.text).join('|');
+  if (key === lastTipKey) return;
+  lastTipKey = key;
+
+  const list = document.getElementById('tip-list');
+  list.innerHTML = tips.map(t => `
+    <div class="tip-item ${t.type}">
+      <div class="tip-icon">${t.icon}</div>
+      <div class="tip-text">${t.text}</div>
+    </div>
+  `).join('');
+}
+
+// ── Skeleton drawing ───────────────────────────────────────────────────────────
+const POSE_CONNECTIONS = [
+  // Face
+  [0,7],[0,8],
+  // Torso
+  [11,12],[11,23],[12,24],[23,24],
+  // Arms
+  [11,13],[13,15],[12,14],[14,16],
+  // Legs
+  [23,25],[25,27],[24,26],[26,28],
+];
+
+function drawSkeleton(lm, W, H, score) {
+  const color = score >= 75 ? '#2d7a4f' : score >= 50 ? '#b06d10' : '#b83232';
+
+  pCtx.save();
+  pCtx.strokeStyle = color;
+  pCtx.lineWidth = 2;
+  pCtx.shadowColor = color;
+  pCtx.shadowBlur = 6;
+  pCtx.globalAlpha = 0.7;
+
+  POSE_CONNECTIONS.forEach(([a, b]) => {
+    if (!lm[a] || !lm[b]) return;
+    if ((lm[a].visibility||0) < 0.4 || (lm[b].visibility||0) < 0.4) return;
+    pCtx.beginPath();
+    pCtx.moveTo(lm[a].x * W, lm[a].y * H);
+    pCtx.lineTo(lm[b].x * W, lm[b].y * H);
+    pCtx.stroke();
+  });
+
+  // Joint dots
+  const keyPoints = [0,7,8,11,12,13,14,23,24];
+  keyPoints.forEach(i => {
+    if (!lm[i] || (lm[i].visibility||0) < 0.4) return;
+    pCtx.beginPath();
+    pCtx.arc(lm[i].x * W, lm[i].y * H, i === 0 ? 5 : 4, 0, Math.PI*2);
+    pCtx.fillStyle = i < 9 ? '#b06d10' : color;
+    pCtx.shadowColor = i < 9 ? '#b06d10' : color;
+    pCtx.globalAlpha = 0.9;
+    pCtx.fill();
+  });
+
+  pCtx.restore();
+}
+
+// ── Angle label drawing ────────────────────────────────────────────────────────
+function drawAngleLabels(angles, pts, W, H) {
+  pCtx.save();
+  pCtx.font = '500 11px "DM Mono"';
+  pCtx.textAlign = 'left';
+
+  const labels = [
+    { text: `${angles.neck.toFixed(0)}°`, pt: pts.midEar, dx: 12, dy: -6, color: '#2d7a4f' },
+    { text: `${angles.shoulder.toFixed(0)}°`, pt: pts.lShoulder, dx: -48, dy: -10, color: '#3a6eb8' },
+    { text: `${angles.spine.toFixed(0)}°`, pt: { x:(pts.midShoulder.x+pts.midHip.x)/2, y:(pts.midShoulder.y+pts.midHip.y)/2 }, dx: 10, dy: 0, color: '#2d7a4f' },
+  ];
+
+  labels.forEach(({ text, pt, dx, dy, color }) => {
+    const x = pt.x + dx, y = pt.y + dy;
+    pCtx.fillStyle = 'rgba(26,25,22,0.7)';
+    const m = pCtx.measureText(text);
+    pCtx.fillRect(x - 2, y - 12, m.width + 6, 16);
+    pCtx.fillStyle = color;
+    pCtx.fillText(text, x, y);
+  });
+
+  pCtx.restore();
+}
+
+// ── Sparkline ─────────────────────────────────────────────────────────────────
+function drawSparkline() {
+  const W = sparkCvs.offsetWidth, H = 36;
+  sparkCvs.width = W * window.devicePixelRatio;
+  sparkCvs.height = H * window.devicePixelRatio;
+  spkCtx.scale(window.devicePixelRatio, window.devicePixelRatio);
+  spkCtx.clearRect(0, 0, W, H);
+
+  const scores = session.scores;
+  if (scores.length < 2) return;
+
+  spkCtx.save();
+  spkCtx.strokeStyle = '#2d7a4f';
+  spkCtx.lineWidth = 1.5;
+  spkCtx.beginPath();
+
+  scores.forEach((s, i) => {
+    const x = (i / (scores.length - 1)) * W;
+    const y = H - (s / 100) * H * 0.9 - H * 0.05;
+    i === 0 ? spkCtx.moveTo(x, y) : spkCtx.lineTo(x, y);
+  });
+  spkCtx.stroke();
+
+  // Fill under line
+  spkCtx.lineTo((scores.length - 1) / (scores.length - 1) * W, H);
+  spkCtx.lineTo(0, H);
+  spkCtx.closePath();
+  spkCtx.fillStyle = 'rgba(45,122,79,0.08)';
+  spkCtx.fill();
+
+  // 75-line marker
+  spkCtx.setLineDash([2,3]);
+  spkCtx.strokeStyle = 'rgba(45,122,79,0.25)';
+  spkCtx.lineWidth = 1;
+  spkCtx.beginPath();
+  const goodY = H - 0.75 * H * 0.9 - H * 0.05;
+  spkCtx.moveTo(0, goodY); spkCtx.lineTo(W, goodY);
+  spkCtx.stroke();
+  spkCtx.restore();
+
+  // Average
+  if (session.scoreCount > 0) {
+    document.getElementById('st-avg').textContent = Math.round(session.scoreSum / session.scoreCount);
+  }
+}
+
+// ── Session timer ──────────────────────────────────────────────────────────────
+setInterval(() => {
+  const s = Math.floor((Date.now() - session.start) / 1000);
+  const m = Math.floor(s / 60);
+  const sec = s % 60;
+  document.getElementById('st-time').textContent = `${m}:${String(sec).padStart(2,'0')}`;
+}, 1000);
+
+// ── Controls ───────────────────────────────────────────────────────────────────
+document.getElementById('btn-skeleton').addEventListener('click', function() {
+  cfg.showSkeleton = !cfg.showSkeleton;
+  this.classList.toggle('active', cfg.showSkeleton);
+  this.textContent = cfg.showSkeleton ? '⊕ Skeleton' : '○ Skeleton';
+});
+
+document.getElementById('btn-angles').addEventListener('click', function() {
+  cfg.showAngles = !cfg.showAngles;
+  this.classList.toggle('active', cfg.showAngles);
+  this.textContent = cfg.showAngles ? '⊕ Angles' : '○ Angles';
+});
+
+document.getElementById('btn-mirror').addEventListener('click', function() {
+  cfg.mirrored = !cfg.mirrored;
+  camCvs.style.transform  = cfg.mirrored ? 'scaleX(-1)' : 'scaleX(1)';
+  poseCvs.style.transform = cfg.mirrored ? 'scaleX(-1)' : 'scaleX(1)';
+  this.classList.toggle('active', cfg.mirrored);
+});
+
+document.getElementById('btn-calibrate').addEventListener('click', function() {
+  // Store current angles as reference (zero point)
+  if (session.scores.length === 0) return;
+  // Simple: snapshot current measurements as ideal
+  cfg.calibrated = true;
+  this.textContent = '✓ Calibrated';
+  this.style.borderColor = 'var(--good)';
+  this.style.color = 'var(--good)';
+  showAlert('✓ Calibrated to your position', 'good');
+  // Reset the ref by capturing next frame
+  pose.onResults = (results) => {
+    if (results.poseLandmarks && results.poseLandmarks.length >= 25) {
+      const lm = results.poseLandmarks;
+      const W = camCvs.width, H = camCvs.height;
+      const leftEar   = lmPx(lm[7],  W, H);
+      const rightEar  = lmPx(lm[8],  W, H);
+      const lShoulder = lmPx(lm[11], W, H);
+      const rShoulder = lmPx(lm[12], W, H);
+      const lHip      = lmPx(lm[23], W, H);
+      const rHip      = lmPx(lm[24], W, H);
+      const midShoulder = midpoint(lShoulder, rShoulder);
+      const midHip      = midpoint(lHip, rHip);
+      const midEar      = midpoint(leftEar, rightEar);
+      cfg.calibRef = {
+        head:     angleLine({ x:leftEar.y, y:leftEar.x }, { x:rightEar.y, y:rightEar.x }),
+        neck:     angleLine(midEar, midShoulder),
+        shoulder: angleLine({ x:lShoulder.y, y:lShoulder.x }, { x:rShoulder.y, y:rShoulder.x }),
+        spine:    angleLine(midShoulder, midHip),
+        hip:      angleLine({ x:lHip.y, y:lHip.x }, { x:rHip.y, y:rHip.x }),
+      };
+      pose.onResults = onPoseResults;
+    }
+  };
+});
+
+// ── Boot ───────────────────────────────────────────────────────────────────────
+window.addEventListener('load', async () => {
+  try {
+    await startCamera();
+  } catch(err) {
+    document.getElementById('cam-loading').innerHTML = `
+      <div style="font-family:'Fraunces',serif;font-size:1.5rem;color:white;letter-spacing:0.1em">Camera Error</div>
+      <div style="font-family:'DM Mono',monospace;font-size:0.6rem;color:rgba(255,255,255,0.4);letter-spacing:0.12em;margin-top:0.5rem">${err.message}</div>
+      <div style="font-family:'DM Mono',monospace;font-size:0.55rem;color:rgba(255,255,255,0.3);margin-top:0.4rem;letter-spacing:0.1em">Allow camera access and reload</div>`;
+  }
+});
+</script>
+</body>
+</html>
